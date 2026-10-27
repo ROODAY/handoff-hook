@@ -7,7 +7,7 @@ const NOW = 1_800_000_000_000
 const cfg = (p: Partial<Config> = {}): Config => ({
   fiveHourThreshold: 90, resumeBelow: 5, sevenDayThreshold: 90, pollSeconds: 60,
   handoffFile: 'HANDOFF.md', claudeModel: 'c', deepseekModel: 'd', enabled: true,
-  role: 'claude', fakeFiveHour: null, fakeSevenDay: null, ...p,
+  role: 'claude', fakeFiveHour: null, fakeSevenDay: null, terminal: 'wt', ...p,
 })
 const snap = (p: Partial<Snapshot> = {}): Snapshot => ({
   fiveHour: 50, fiveHourResetsAt: NOW + 3_600_000, sevenDay: 40,

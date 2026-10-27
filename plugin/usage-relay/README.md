@@ -28,11 +28,12 @@ Every field is a row in `/config` (or `claude plugin configure usage-relay`):
 | `handoff_file` | `HANDOFF.md` | handoff file in the project root |
 | `claude_model` | `Claude Code API/claude-opus-5-5[1m]` | model for the return trip |
 | `deepseek_model` | `DeepSeek/deepseek-flash` | model for the outbound trip |
+| `terminal` | `wt` | launcher program: `wt`, `preview`, or a full path |
 | `enabled` | true | master switch |
 
 Environment overrides, read per session: `USAGE_RELAY_ROLE` (`claude` or
 `deepseek`, set by the launcher), `USAGE_RELAY_5H`, `USAGE_RELAY_7D`,
-`USAGE_RELAY_RESUME_BELOW`, `USAGE_RELAY_FAKE_5H`, `USAGE_RELAY_FAKE_7D`,
+`USAGE_RELAY_RESUME_BELOW`, `USAGE_RELAY_TERMINAL`, `USAGE_RELAY_FAKE_5H`, `USAGE_RELAY_FAKE_7D`,
 `USAGE_RELAY_RESET=1` (clears the plugin's saved state at session start),
 `USAGE_RELAY_DISABLED=1`. With no `USAGE_RELAY_ROLE`, a session whose model
 name contains `deepseek` is treated as the DeepSeek side.

@@ -191,9 +191,23 @@ export const register: Register = (on, options: PluginOptions) => {
           current.owner === sessionId &&
           current.phase === relay.phase
         ) {
+          let terminal = config.terminal
+          if (terminal.toLowerCase() === 'preview') {
+            try {
+              const found = await $.process.run(
+                ['pwsh', '-NoProfile', '-NonInteractive', '-Command',
+                  '(Get-AppxPackage Microsoft.WindowsTerminalPreview).InstallLocation'],
+                { timeoutMs: 5_000 },
+              )
+              const loc = (found.stdout ?? '').trim()
+              if (loc) terminal = `${loc}\WindowsTerminal.exe`
+            } catch {
+              terminal = 'wt'
+            }
+          }
           try {
             await $.process.run(
-              buildLaunchArgv({ root, target: result.launch.target, config }),
+              buildLaunchArgv({ root, target: result.launch.target, config: { ...config, terminal } }),
               { timeoutMs: 10_000 },
             )
           } catch {
