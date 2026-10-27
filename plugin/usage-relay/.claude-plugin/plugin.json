@@ -1,0 +1,55 @@
+{
+  "name": "usage-relay",
+  "version": "0.1.0",
+  "description": "Watches Claude usage and relays work to a DeepSeek session with a written handoff, then back.",
+  "userConfig": {
+    "five_hour_threshold": {
+      "type": "number",
+      "title": "5-hour switch threshold (%)",
+      "description": "When the 5-hour Claude window reaches this percentage, the session writes a handoff and opens a DeepSeek session.",
+      "default": 90
+    },
+    "resume_below": {
+      "type": "number",
+      "title": "Return to Claude below (%)",
+      "description": "A DeepSeek session returns to Claude once the 5-hour window has reset and usage is at or below this percentage.",
+      "default": 5
+    },
+    "seven_day_threshold": {
+      "type": "number",
+      "title": "7-day tool-block threshold (%)",
+      "description": "When the 7-day window reaches this percentage, tool calls are blocked and the person is notified; nothing switches.",
+      "default": 90
+    },
+    "poll_seconds": {
+      "type": "number",
+      "title": "Poll period (seconds)",
+      "description": "How often the session asks the usage endpoint for the current 5-hour and 7-day percentages.",
+      "default": 60
+    },
+    "handoff_file": {
+      "type": "string",
+      "title": "Handoff file name",
+      "description": "The file the outgoing model writes in the project root, and the incoming model reads.",
+      "default": "HANDOFF.md"
+    },
+    "claude_model": {
+      "type": "string",
+      "title": "Claude model for the return trip",
+      "description": "The model string passed to claude when a DeepSeek session hands work back.",
+      "default": "Claude Code API/claude-opus-5-5[1m]"
+    },
+    "deepseek_model": {
+      "type": "string",
+      "title": "DeepSeek model for the outbound trip",
+      "description": "The model string passed to claude when a Claude session hands work to DeepSeek.",
+      "default": "DeepSeek/deepseek-flash"
+    },
+    "enabled": {
+      "type": "boolean",
+      "title": "Enabled",
+      "description": "Turns the guard off without uninstalling the plugin.",
+      "default": true
+    }
+  }
+}
