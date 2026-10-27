@@ -65,7 +65,7 @@ function handoffFresh(input: EvaluateInput): boolean {
 
 export function evaluate(input: EvaluateInput): EvaluateResult {
   const { config, snapshot, now, sessionId, role } = input
-  const leaseMs = input.leaseMs ?? 600_000
+  const leaseMs = input.leaseMs ?? 180_000
 
   if (!config.enabled || role === 'none' || snapshot.stale) {
     return quiet(input.state)
