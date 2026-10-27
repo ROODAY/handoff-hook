@@ -28,10 +28,14 @@ started from a written handoff avoids both.
 
 ## Install
 
+From GitHub:
+
 ```
-claude plugin marketplace add <path-to-this-repo>
-claude plugin install usage-relay@handoff-hook --scope user
+claude plugin marketplace add ROODAY/handoff-hook
+claude plugin install usage-relay@handoff-hook
 ```
+
+Or from a local clone, add the clone's path instead of the repository name.
 
 The plugin is read from its folder, so edits take effect with
 `/reload-plugins`. Configure thresholds in `/config` (or
