@@ -20,6 +20,12 @@ test('env overrides options and role is read from USAGE_RELAY_ROLE', () => {
   expect(c.fakeFiveHour).toBe(95)
 })
 
+test('the launch terminal defaults to wt and is overridable', () => {
+  expect(readConfig({}, {}).terminal).toBe('wt')
+  expect(readConfig({ terminal: 'preview' }, {}).terminal).toBe('preview')
+  expect(readConfig({}, { USAGE_RELAY_TERMINAL: 'preview' }).terminal).toBe('preview')
+})
+
 test('USAGE_RELAY_DISABLED turns the guard off', () => {
   expect(readConfig({}, { USAGE_RELAY_DISABLED: '1' }).enabled).toBe(false)
 })

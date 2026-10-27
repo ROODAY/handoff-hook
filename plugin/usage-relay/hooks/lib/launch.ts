@@ -28,7 +28,7 @@ export function buildLaunchArgv(spec: {
     `$env:USAGE_RELAY_ROLE=${quoted(spec.target, 'role')}; ` +
     `& claude --model ${quoted(model, 'model')} ${quoted(initialPrompt(spec.config.handoffFile), 'prompt')}`
   return [
-    'wt', '-w', '0', 'new-tab', '-d', spec.root,
+    spec.config.terminal, '-w', '0', 'new-tab', '-d', spec.root,
     'pwsh', '-NoExit', '-EncodedCommand', utf16leBase64(command),
   ]
 }

@@ -45,6 +45,12 @@
       "description": "The model string passed to claude when a Claude session hands work to DeepSeek.",
       "default": "DeepSeek/deepseek-flash"
     },
+    "terminal": {
+      "type": "string",
+      "title": "Terminal program",
+      "description": "The executable used to open the successor session. `wt` is Windows Terminal, `preview` is Windows Terminal Preview, or give a full path.",
+      "default": "wt"
+    },
     "enabled": {
       "type": "boolean",
       "title": "Enabled",

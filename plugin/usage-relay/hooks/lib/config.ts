@@ -10,6 +10,7 @@ export type Config = {
   handoffFile: string
   claudeModel: string
   deepseekModel: string
+  terminal: string
   enabled: boolean
   role: Role
   fakeFiveHour: number | null
@@ -24,6 +25,7 @@ const DEFAULTS = {
   handoffFile: 'HANDOFF.md',
   claudeModel: 'Claude Code API/claude-opus-5-5[1m]',
   deepseekModel: 'DeepSeek/deepseek-flash',
+  terminal: 'wt',
 }
 
 function num(value: unknown, fallback: number): number {
@@ -84,6 +86,7 @@ export function readConfig(
       env.USAGE_RELAY_DEEPSEEK_MODEL,
       str(pick('deepseek_model', DEFAULTS.deepseekModel), DEFAULTS.deepseekModel),
     ),
+    terminal: str(env.USAGE_RELAY_TERMINAL, str(pick('terminal', DEFAULTS.terminal), DEFAULTS.terminal)),
     enabled: pick('enabled', true) !== false && env.USAGE_RELAY_DISABLED !== '1',
     role: role(env.USAGE_RELAY_ROLE),
     fakeFiveHour: fakeNumber(env.USAGE_RELAY_FAKE_5H),

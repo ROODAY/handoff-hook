@@ -6,7 +6,7 @@ const config: Config = {
   fiveHourThreshold: 90, resumeBelow: 5, sevenDayThreshold: 90, pollSeconds: 60,
   handoffFile: 'HANDOFF.md', claudeModel: 'Claude Code API/claude-opus-5-5[1m]',
   deepseekModel: 'DeepSeek/deepseek-flash', enabled: true, role: 'claude',
-  fakeFiveHour: null, fakeSevenDay: null,
+  fakeFiveHour: null, fakeSevenDay: null, terminal: 'wt',
 }
 
 function decode(b64: string): string {
@@ -38,6 +38,15 @@ test('a claude launch uses the configured claude model', () => {
 test('the encoded command carries no shell metacharacters wt could split on', () => {
   const argv = buildLaunchArgv({ root: 'C:/w', target: 'claude', config })
   expect(argv[9]).toMatch(/^[A-Za-z0-9+/]+=*$/)
+})
+
+test('a configured terminal is the program that gets launched', () => {
+  const argv = buildLaunchArgv({
+    root: 'C:/w', target: 'claude',
+    config: { ...config, terminal: 'C:\Tools\WindowsTerminal.exe' },
+  })
+  expect(argv[0]).toBe('C:\Tools\WindowsTerminal.exe')
+  expect(argv.slice(1, 7)).toEqual(['-w', '0', 'new-tab', '-d', 'C:/w', 'pwsh'])
 })
 
 test('the initial prompt is model-neutral and names the handoff', () => {
