@@ -35,6 +35,12 @@ function str(value: unknown, fallback: string): string {
   return typeof value === 'string' && value.length > 0 ? value : fallback
 }
 
+function fakeNumber(value: string | undefined): number | null {
+  if (value === undefined) return null
+  const n = Number(value)
+  return Number.isFinite(n) ? n : null
+}
+
 function role(value: string | undefined): Role {
   return value === 'claude' || value === 'deepseek' ? value : 'none'
 }
@@ -80,7 +86,7 @@ export function readConfig(
     ),
     enabled: pick('enabled', true) !== false && env.USAGE_RELAY_DISABLED !== '1',
     role: role(env.USAGE_RELAY_ROLE),
-    fakeFiveHour: env.USAGE_RELAY_FAKE_5H === undefined ? null : num(env.USAGE_RELAY_FAKE_5H, NaN) || 0,
-    fakeSevenDay: env.USAGE_RELAY_FAKE_7D === undefined ? null : num(env.USAGE_RELAY_FAKE_7D, NaN) || 0,
+    fakeFiveHour: fakeNumber(env.USAGE_RELAY_FAKE_5H),
+    fakeSevenDay: fakeNumber(env.USAGE_RELAY_FAKE_7D),
   }
 }

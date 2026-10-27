@@ -67,7 +67,12 @@ export function evaluate(input: EvaluateInput): EvaluateResult {
   const { config, snapshot, now, sessionId, role } = input
   const leaseMs = input.leaseMs ?? 180_000
 
-  if (!config.enabled || role === 'none' || snapshot.stale) {
+  if (!config.enabled || role === 'none') {
+    return quiet(input.state)
+  }
+  // A stale reading must not disarm a handoff already in flight.
+  const inFlight = input.state.phase === 'handoff_pending' || input.state.phase === 'return_pending'
+  if (snapshot.stale && !inFlight) {
     return quiet(input.state)
   }
 
@@ -89,6 +94,7 @@ export function evaluate(input: EvaluateInput): EvaluateResult {
   if (windowChanged && (snapshot.fiveHour === null || snapshot.fiveHour < config.fiveHourThreshold)) {
     state = {
       ...initialRelayState,
+      windowKey: currentKey,
       sevenDayAck: state.sevenDayAck,
       pausedUntil: state.pausedUntil,
       notifiedSevenDay: state.notifiedSevenDay,
@@ -97,7 +103,7 @@ export function evaluate(input: EvaluateInput): EvaluateResult {
 
   if (role === 'claude' && snapshot.sevenDay !== null &&
       snapshot.sevenDay >= config.sevenDayThreshold &&
-      sevenDayKey(snapshot) !== state.sevenDayAck) {
+      !usesTolerance(sevenDayKey(snapshot), state.sevenDayAck ?? '')) {
     const key = sevenDayKey(snapshot)
     const notify = state.notifiedSevenDay === key
       ? null
@@ -110,13 +116,15 @@ export function evaluate(input: EvaluateInput): EvaluateResult {
   }
 
   if (role === 'claude' && snapshot.fiveHour !== null && snapshot.fiveHour >= config.fiveHourThreshold) {
-    const claimedByOther = state.owner !== null && state.owner !== sessionId
+    const claimedByOther =
+      state.phase === 'handoff_pending' && state.owner !== null && state.owner !== sessionId
     if (claimedByOther) {
       return quiet({ ...state, ownerSeenAt: state.ownerSeenAt })
     }
 
     let requestHandoff: EvaluateResult['requestHandoff'] = null
-    if (state.phase === 'idle' || !usesTolerance(state.windowKey, currentKey)) {
+    const mayClaim = state.phase === 'idle' || state.phase === 'returned'
+    if (mayClaim || !usesTolerance(state.windowKey, currentKey)) {
       state = {
         ...state,
         windowKey: currentKey,
@@ -158,7 +166,6 @@ export function evaluate(input: EvaluateInput): EvaluateResult {
     const usable =
       snapshot.fiveHour !== null &&
       snapshot.fiveHour <= config.resumeBelow &&
-      (snapshot.fiveHourResetsAt === null || now >= snapshot.fiveHourResetsAt) &&
       (state.returnFor === null || !usesTolerance(state.returnFor, currentKey))
 
     const returning = state.phase === 'return_pending' && state.owner === sessionId
@@ -168,6 +175,7 @@ export function evaluate(input: EvaluateInput): EvaluateResult {
       if (!returning) {
         state = {
           ...state,
+          windowKey: currentKey,
           phase: 'return_pending',
           owner: sessionId,
           ownerSeenAt: now,
@@ -203,7 +211,7 @@ export function evaluate(input: EvaluateInput): EvaluateResult {
 
 function suppressIfPaused(result: EvaluateResult, pausedUntil: number, now: number): EvaluateResult {
   if (pausedUntil <= now) return result
-  return { ...result, requestHandoff: null, launch: null, blocked: null, notify: null }
+  return { ...result, requestHandoff: null, launch: null, notify: null }
 }
 
 export function acknowledgeSevenDay(

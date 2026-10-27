@@ -1,7 +1,7 @@
 import type { Config } from './config'
 
-export function initialPrompt(): string {
-  return 'Read HANDOFF.md in this directory and continue the work it describes.'
+export function initialPrompt(handoffFile: string): string {
+  return `Read ${handoffFile} in this directory and continue the work it describes.`
 }
 
 function utf16leBase64(text: string): string {
@@ -26,7 +26,7 @@ export function buildLaunchArgv(spec: {
   const model = spec.target === 'deepseek' ? spec.config.deepseekModel : spec.config.claudeModel
   const command =
     `$env:USAGE_RELAY_ROLE=${quoted(spec.target, 'role')}; ` +
-    `& claude --model ${quoted(model, 'model')} ${quoted(initialPrompt(), 'prompt')}`
+    `& claude --model ${quoted(model, 'model')} ${quoted(initialPrompt(spec.config.handoffFile), 'prompt')}`
   return [
     'wt', '-w', '0', 'new-tab', '-d', spec.root,
     'pwsh', '-NoExit', '-EncodedCommand', utf16leBase64(command),

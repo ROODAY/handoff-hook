@@ -41,7 +41,7 @@ test('the encoded command carries no shell metacharacters wt could split on', ()
 })
 
 test('the initial prompt is model-neutral and names the handoff', () => {
-  expect(initialPrompt()).toBe(
+  expect(initialPrompt('HANDOFF.md')).toBe(
     'Read HANDOFF.md in this directory and continue the work it describes.',
   )
 })

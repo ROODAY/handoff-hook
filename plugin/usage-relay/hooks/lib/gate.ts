@@ -1,9 +1,10 @@
-import { handoffReminder, SEVEN_DAY_DENY } from './reason'
+import { handoffReason, handoffReminder, sevenDayReason, SEVEN_DAY_DENY } from './reason'
 
 export type GateInput = {
   kind: 'handoff' | 'seven_day'
   root: string
   handoffFile: string
+  percent?: number | null
 }
 
 const READS = new Set(['Read', 'Glob', 'Grep'])
@@ -30,5 +31,10 @@ export function gateTool(
 ): { deny: string } | null {
   if (READS.has(tool)) return null
   if (g.kind === 'handoff' && WRITES.has(tool) && targetsHandoff(input, g)) return null
-  return { deny: g.kind === 'seven_day' ? SEVEN_DAY_DENY : handoffReminder(g.handoffFile) }
+  if (g.kind === 'seven_day') {
+    return { deny: typeof g.percent === 'number' ? sevenDayReason(g.percent) : SEVEN_DAY_DENY }
+  }
+  return {
+    deny: typeof g.percent === 'number' ? handoffReason(g.percent, g.handoffFile) : handoffReminder(g.handoffFile),
+  }
 }

@@ -135,11 +135,12 @@ test('a stale snapshot does nothing', () => {
   expect(r.blocked).toBeNull()
 })
 
-test('a pause suppresses action until it passes', () => {
+test('a pause suppresses switching but never the tool gate', () => {
   const paused = { ...initialRelayState, pausedUntil: NOW + 60_000 }
   const r = evaluate(base({ snapshot: snap({ fiveHour: 99 }), state: paused }))
   expect(r.requestHandoff).toBeNull()
-  expect(r.blocked).toBeNull()
+  expect(r.launch).toBeNull()
+  expect(r.blocked).toEqual({ kind: 'handoff' })
 })
 
 test('an expired lease lets another session take the window over', () => {
@@ -152,5 +153,55 @@ test('an expired lease lets another session take the window over', () => {
     sessionId: 's2', snapshot: snap({ fiveHour: 95, fiveHourResetsAt: NOW }), state: owned,
   }))
   expect(r.state.owner).toBe('s2')
+  expect(r.blocked).toEqual({ kind: 'handoff' })
+})
+
+test('a real post-reset reading (future reset time, usage 0) returns to Claude', () => {
+  const afterReset = snap({ fiveHour: 0.5, fiveHourResetsAt: NOW + 5 * 3_600_000 })
+  const r = evaluate(base({ role: 'deepseek', snapshot: afterReset }))
+  expect(r.requestHandoff).toEqual({ direction: 'to_claude' })
+})
+
+test('after a completed return, the next outbound window still claims and gates', () => {
+  const reset = snap({ fiveHour: 0, fiveHourResetsAt: NOW - 60_000 })
+  const returned = evaluate(base({ role: 'deepseek', snapshot: reset }))
+  const done = evaluate(base({
+    role: 'deepseek', snapshot: reset, state: returned.state, handoffMtimeMs: NOW + 1,
+  }))
+  expect(done.launch).toEqual({ target: 'claude' })
+  const nextWindow = snap({ fiveHour: 92, fiveHourResetsAt: NOW + 10 * 3_600_000 })
+  const claude = evaluate(base({ snapshot: nextWindow, state: done.state }))
+  expect(claude.requestHandoff).toEqual({ direction: 'to_deepseek' })
+  expect(claude.state.owner).toBe('s1')
+})
+
+test('a Claude session claims again in the same window after a return left the state returned', () => {
+  const returnedState = {
+    ...initialRelayState, phase: 'returned' as const, owner: 'deepseek-1',
+    ownerSeenAt: NOW, windowKey: '5h:30000000',
+  }
+  const r = evaluate(base({
+    snapshot: snap({ fiveHour: 93, fiveHourResetsAt: NOW }), state: returnedState,
+  }))
+  expect(r.requestHandoff).toEqual({ direction: 'to_deepseek' })
+  expect(r.blocked).toEqual({ kind: 'handoff' })
+})
+
+test('a 7d acknowledgement survives a key that drifts across the rounding boundary', () => {
+  const over = snap({ sevenDay: 95, sevenDayResetsAt: NOW })
+  const first = evaluate(base({ snapshot: over }))
+  const acked = acknowledgeSevenDay(cfg(), over, first.state)
+  const drifted = snap({ sevenDay: 95, sevenDayResetsAt: NOW + 30_000 })
+  expect(evaluate(base({ snapshot: drifted, state: acked })).blocked).toBeNull()
+})
+
+test('a stale snapshot keeps an in-flight handoff gate armed', () => {
+  const pending = {
+    ...initialRelayState, phase: 'handoff_pending' as const, owner: 's1',
+    ownerSeenAt: NOW, requestedAt: NOW - 1000, windowKey: '5h:30000000',
+  }
+  const r = evaluate(base({
+    snapshot: snap({ fiveHour: 95, fiveHourResetsAt: NOW, stale: true }), state: pending,
+  }))
   expect(r.blocked).toEqual({ kind: 'handoff' })
 })

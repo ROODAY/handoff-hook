@@ -1,6 +1,6 @@
 import type { PluginOptions, Register } from 'claude-code'
 import { readConfig, type Config, type Role } from './lib/config'
-import { fakeSnapshot, parseUsageResponse, readToken, fiveHourKey, type Snapshot } from './lib/usage'
+import { fakeSnapshot, parseUsageResponse, readToken, fiveHourKey, sevenDayKey, type Snapshot } from './lib/usage'
 import { acknowledgeSevenDay, evaluate, initialRelayState, type RelayState } from './lib/state'
 import { gateTool } from './lib/gate'
 import { buildLaunchArgv } from './lib/launch'
@@ -42,8 +42,16 @@ export const register: Register = (on, options: PluginOptions) => {
   const role = (): Role => config?.role ?? 'none'
 
   on('session.start', async ($, e, next) => {
+    const envRole = await $.env.get('USAGE_RELAY_ROLE')
+    let model = ''
+    try {
+      model = (await $.session.model()) ?? ''
+    } catch {
+      model = ''
+    }
+    const inferredRole = envRole ?? (model.toLowerCase().includes('deepseek') ? 'deepseek' : undefined)
     config = readConfig(options, {
-      USAGE_RELAY_ROLE: await $.env.get('USAGE_RELAY_ROLE'),
+      USAGE_RELAY_ROLE: inferredRole,
       USAGE_RELAY_5H: await $.env.get('USAGE_RELAY_5H'),
       USAGE_RELAY_7D: await $.env.get('USAGE_RELAY_7D'),
       USAGE_RELAY_POLL: await $.env.get('USAGE_RELAY_POLL'),
@@ -71,9 +79,14 @@ export const register: Register = (on, options: PluginOptions) => {
       argumentHint: 'status|now|back|pause|resume|reset|test on|off',
     })
 
+    let ticking = false
     tick = async () => {
-      if (!config) return
+      if (!config || ticking) return
+      ticking = true
+      try {
       const now = Date.now()
+      const storedNow = await $.store.get('relay')
+      if (isRelayState(storedNow)) relay = storedNow
       let fresh = fakeSnapshot(
         { fakeFiveHour: fakeFiveHour ?? config.fakeFiveHour, fakeSevenDay: config.fakeSevenDay },
         now,
@@ -129,6 +142,29 @@ export const register: Register = (on, options: PluginOptions) => {
         turnIdle,
       })
       relay = result.state
+      let locked = true
+      if (result.requestHandoff) {
+        const key = (result.requestHandoff.direction === 'to_deepseek'
+          ? relay.windowKey
+          : relay.returnFor ?? relay.windowKey).replace(/[^a-z0-9]/gi, '-')
+        const lockName = `usage-relay-${result.requestHandoff.direction}-${key}.lock`
+        try {
+          const claimed = await $.process.run(
+            ['pwsh', '-NoProfile', '-NonInteractive', '-Command',
+              `try { $f=[IO.File]::CreateNew([IO.Path]::Combine([IO.Path]::GetTempPath(),'${lockName}')); $f.Dispose(); exit 0 } catch { exit 1 }`],
+            { timeoutMs: 5_000 },
+          )
+          locked = ((claimed as { exitCode?: number } | undefined)?.exitCode ?? 0) === 0
+        } catch {
+          // No process runner (a test host, a locked-down shell): the store claim still gates.
+          locked = true
+        }
+        if (!locked) {
+          const shared = await $.store.get('relay')
+          if (isRelayState(shared)) relay = shared
+          return
+        }
+      }
       await $.store.set('relay', relay)
 
       if (result.requestHandoff) {
@@ -172,6 +208,11 @@ export const register: Register = (on, options: PluginOptions) => {
       if (result.blocked?.kind === 'seven_day' && snapshot.sevenDay !== null) {
         $.ui.status(sevenDayReason(snapshot.sevenDay))
       }
+      } catch {
+        // a failed tick leaves the last known state in place
+      } finally {
+        ticking = false
+      }
     }
 
     await tick()
@@ -184,27 +225,23 @@ export const register: Register = (on, options: PluginOptions) => {
   })
 
   on('tool.call', ($, e, next) => {
-    if (!config || !config.enabled || config.role !== 'claude' || !snapshot) return next(e)
-    const result = evaluate({
-      now: Date.now(),
-      sessionId,
-      role: 'claude',
-      config,
-      snapshot,
-      state: relay ?? initialRelayState,
-      handoffMtimeMs: handoffMtime,
-      turnIdle,
-    })
-    if (!result.blocked) return next(e)
+    if (!config || !config.enabled || config.role !== 'claude') return next(e)
+    const state = relay ?? initialRelayState
+    const pending = state.phase === 'handoff_pending' && state.owner === sessionId
+    const weekly = !pending && snapshot !== null && !snapshot.stale &&
+      snapshot.sevenDay !== null && snapshot.sevenDay >= config.sevenDayThreshold &&
+      sevenDayKey(snapshot) !== (state.sevenDayAck ?? '')
+    if (!pending && !weekly) return next(e)
     const denial = gateTool(
-      { kind: result.blocked.kind, root, handoffFile: config.handoffFile },
+      { kind: pending ? 'handoff' : 'seven_day', root, handoffFile: config.handoffFile,
+        percent: pending ? snapshot?.fiveHour ?? null : snapshot?.sevenDay ?? null },
       String(e.tool),
       e as unknown as Record<string, unknown>,
     )
     return denial ?? next(e)
   }).catch(($, e, next) => (next.called ? next(e) : { deny: 'usage-relay: its guard failed.' }))
 
-  on('classic.Stop', ($, e, next) => {
+  on('classic.Stop', async ($, e, next) => {
     if (!config || !config.enabled || !snapshot || !relay) return next(e)
     if (e.stop_hook_active || config.role !== 'claude') return next(e)
     const pending =
@@ -212,8 +249,15 @@ export const register: Register = (on, options: PluginOptions) => {
       relay.owner === sessionId &&
       snapshot.fiveHour !== null &&
       snapshot.fiveHour >= config.fiveHourThreshold
-    const written =
-      handoffMtime !== null && relay.requestedAt !== null && handoffMtime >= relay.requestedAt
+    let written = handoffMtime !== null && relay.requestedAt !== null && handoffMtime >= relay.requestedAt
+    if (!written) {
+      try {
+        const st = await $.fs.stat(`${root}/${config.handoffFile}`)
+        written = st.kind === 'file' && relay.requestedAt !== null && st.mtimeMs >= relay.requestedAt
+      } catch {
+        written = false
+      }
+    }
     if (!pending || written) return next(e)
     return { block: handoffReason(snapshot.fiveHour ?? 0, config.handoffFile) }
   }).catch(($, e, next) => {
@@ -224,11 +268,13 @@ export const register: Register = (on, options: PluginOptions) => {
   })
 
   on('turn.start', ($, e, next) => {
+    if (e.agentId) return next(e)
     turnIdle = false
     return next(e)
   })
 
   on('turn.complete', async ($, e, next) => {
+    if (e.agentId) return next(e)
     turnIdle = true
     if (e.reason === 'answer') await tick?.()
     return next(e)
@@ -271,8 +317,9 @@ export const register: Register = (on, options: PluginOptions) => {
       return { text: 'Switches paused for five hours (or until /relay resume).' }
     }
     if (arg === 'resume') {
-      relay = snapshot ? acknowledgeSevenDay(config, snapshot, state) : { ...state, pausedUntil: 0 }
-      await $.store.set('relay', { ...relay, pausedUntil: 0 })
+      const acked = snapshot ? acknowledgeSevenDay(config, snapshot, state) : state
+      relay = { ...acked, pausedUntil: 0 }
+      await $.store.set('relay', relay)
       return { text: 'Weekly usage acknowledged for this window; tools unblocked.' }
     }
     if (arg === 'reset') {
