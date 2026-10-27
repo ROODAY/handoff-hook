@@ -1,0 +1,5 @@
+{
+  "name": "handoff-hook",
+  "owner": { "name": "Rudhra" },
+  "plugins": [{ "name": "usage-relay", "source": "./plugin/usage-relay" }]
+}
