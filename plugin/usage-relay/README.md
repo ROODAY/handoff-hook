@@ -32,14 +32,16 @@ Every field is a row in `/config` (or `claude plugin configure usage-relay`):
 
 Environment overrides, read per session: `USAGE_RELAY_ROLE` (`claude` or
 `deepseek`, set by the launcher), `USAGE_RELAY_5H`, `USAGE_RELAY_7D`,
-`USAGE_RELAY_FAKE_5H`, `USAGE_RELAY_FAKE_7D`, `USAGE_RELAY_DISABLED=1`.
+`USAGE_RELAY_FAKE_5H`, `USAGE_RELAY_FAKE_7D`, `USAGE_RELAY_RESET=1` (clears
+the plugin's saved state at session start), `USAGE_RELAY_DISABLED=1`.
 
 ## Slash command
 
-`/relay status | now | back | pause | resume | test on | test off`.
+`/relay status | now | back | pause | resume | reset | test on | test off`.
 
 - `resume` acknowledges the current 7-day window after a tool block.
-- `pause` suppresses switches until the current 5-hour window resets.
+- `pause` suppresses switches for five hours.
+- `reset` clears saved relay state on this machine.
 
 ## Testing without burning quota
 
