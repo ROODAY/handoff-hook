@@ -78,7 +78,7 @@ export const register: Register = (on, options: PluginOptions) => {
         { fakeFiveHour: fakeFiveHour ?? config.fakeFiveHour, fakeSevenDay: config.fakeSevenDay },
         now,
       )
-      if (!fresh && config.role !== 'none') {
+      if (!fresh) {
         try {
           const home = (await $.env.get('USERPROFILE')) ?? ''
           const token = readToken(await $.fs.read(`${home}/.claude/.credentials.json`), Date.now())
@@ -103,6 +103,13 @@ export const register: Register = (on, options: PluginOptions) => {
       }
       snapshot = { ...fresh, stale: false }
       await $.store.set('usage', snapshot)
+      $.ui.status(
+        `5h ${percent(snapshot.fiveHour)}% · 7d ${percent(snapshot.sevenDay)}% · reset ${clockTime(snapshot.fiveHourResetsAt)}`,
+      )
+
+      // A session with no role shows usage but never claims, switches or writes relay state.
+      if (config.role === 'none') return
+
       root = await $.session.root()
       try {
         const st = await $.fs.stat(`${root}/${config.handoffFile}`)
@@ -124,16 +131,17 @@ export const register: Register = (on, options: PluginOptions) => {
       relay = result.state
       await $.store.set('relay', relay)
 
-      $.ui.status(
-        `5h ${percent(snapshot.fiveHour)}% · 7d ${percent(snapshot.sevenDay)}% · reset ${clockTime(snapshot.fiveHourResetsAt)}`,
-      )
-
       if (result.requestHandoff) {
         const text =
           result.requestHandoff.direction === 'to_deepseek' && snapshot.fiveHour !== null
             ? handoffReason(snapshot.fiveHour, config.handoffFile)
             : handoffRequestToClaude(config.handoffFile)
         await $.session.append({ message: { type: 'user', content: [{ type: 'text', text }] } })
+        if (result.requestHandoff.direction === 'to_claude' && turnIdle) {
+          await $.prompt.submit({
+            text: `Claude's 5-hour window has reset. Write ${config.handoffFile} in the project root using the template above, then end your turn.`,
+          })
+        }
       }
 
       if (result.notify) {
@@ -169,7 +177,7 @@ export const register: Register = (on, options: PluginOptions) => {
     await tick()
     if (config.role !== 'none') {
       $.clock.every(config.pollSeconds * 1000, () => {
-        void tick?.()
+        void tick?.().catch(() => {})
       })
     }
     return next(e)
@@ -208,7 +216,12 @@ export const register: Register = (on, options: PluginOptions) => {
       handoffMtime !== null && relay.requestedAt !== null && handoffMtime >= relay.requestedAt
     if (!pending || written) return next(e)
     return { block: handoffReason(snapshot.fiveHour ?? 0, config.handoffFile) }
-  }).catch(($, e, next) => (next.called ? next(e) : undefined))
+  }).catch(($, e, next) => {
+    if (next.called) return next(e)
+    return e.stop_hook_active
+      ? undefined
+      : { block: 'usage-relay: its guard failed. Write the handoff before ending the turn.' }
+  })
 
   on('turn.start', ($, e, next) => {
     turnIdle = false
