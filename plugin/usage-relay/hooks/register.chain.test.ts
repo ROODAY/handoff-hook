@@ -1,4 +1,5 @@
 import { expect, mock, test } from 'claude-code/testing'
+import { parseChain } from './lib/chain'
 
 const SESSION = { surface: 'terminal', isInteractive: true, cwd: '/work' }
 const CHAIN = JSON.stringify([
@@ -6,9 +7,14 @@ const CHAIN = JSON.stringify([
   { id: 'deepseek', label: 'DeepSeek', model: 'dm', meter: { type: 'deepseek-balance', api_key_env: 'DEEPSEEK_API_KEY', exhaust_below: { amount: 2, currency: 'USD' } } },
 ])
 
-function seat(on: any, statuses: (string | undefined)[], chainText: string | undefined): void {
+function seat(
+  on: any,
+  statuses: (string | undefined)[],
+  chainText: string | undefined,
+  entries: Record<string, unknown> = {},
+): void {
   mock.clock(on)
-  mock.store(on)
+  mock.store(on, entries)
   on('session.start', (_$: any, e: any) => ({ cwd: e.cwd }))
   on('session.id', () => ({ value: 's1' }))
   on('session.root', () => ({ value: '/work' }))
@@ -50,6 +56,22 @@ test('enabling with no chain is refused', async ($, on) => {
   expect(allowed.text).toBe('ok')
 })
 
+test('enabling a disabled session starts acting', async ($, on) => {
+  const statuses: (string | undefined)[] = []
+  seat(on, statuses, CHAIN)
+  mock.env(on, {
+    USAGE_RELAY_CHAIN_FILE: 'C:/chain.json',
+    USAGE_RELAY_STEP: 'claude',
+    USAGE_RELAY_FAKE_METERS: '{"claude":{"exhausted":false,"available":false},"deepseek":{"exhausted":false,"available":true}}',
+  })
+
+  await $.session.start(SESSION)
+  expect(statuses).toContain('usage-relay: disabled')
+  await $.command.run({ command: 'relay', args: 'enable' })
+
+  expect(statuses.some(line => line?.startsWith('[1/2]'))).toBe(true)
+})
+
 test('an enabled session over the limit denies tools and asks for a handoff', async ($, on) => {
   const statuses: (string | undefined)[] = []
   seat(on, statuses, CHAIN)
@@ -66,5 +88,30 @@ test('an enabled session over the limit denies tools and asks for a handoff', as
   const denied = await $.tool.call({ tool: 'Bash', command: 'echo hi' })
   expect(denied.deny ?? denied.text).toContain('HANDOFF.md')
   const allowed = await $.tool.call({ tool: 'Read', file_path: '/work/a.ts' })
+  expect(allowed.text).toBe('ok')
+})
+
+test('a session that does not own a pending move neither gates nor claims', async ($, on) => {
+  const statuses: (string | undefined)[] = []
+  const parsed = parseChain(CHAIN)
+  const chainId = 'chain' in parsed ? parsed.chain.id : ''
+  seat(on, statuses, CHAIN, {
+    relay: {
+      chainId, windowKey: '', phase: 'handoff_pending', owner: 'other',
+      ownerSeenAt: Date.now(), requestedAt: Date.now() - 1000,
+      fromStepId: 'claude', toStepId: 'deepseek', pausedUntil: 0,
+      sevenDayAck: null, notifiedAll: null, notifiedSevenDay: null, forced: false,
+    },
+  })
+  mock.env(on, {
+    USAGE_RELAY_CHAIN_FILE: 'C:/chain.json',
+    USAGE_RELAY_STEP: 'claude',
+    USAGE_RELAY_ENABLED: '1',
+    USAGE_RELAY_FAKE_METERS: '{"claude":{"exhausted":true,"available":false},"deepseek":{"exhausted":false,"available":true}}',
+  })
+
+  await $.session.start(SESSION)
+
+  const allowed = await $.tool.call({ tool: 'Bash', command: 'echo hi' })
   expect(allowed.text).toBe('ok')
 })

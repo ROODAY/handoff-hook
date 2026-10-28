@@ -136,3 +136,28 @@ test('a lock key names the move and a lock older than the lease is stale', () =>
 })
 
 
+
+test('a 7-day gate is suppressed once acknowledged for that window', () => {
+  const gated = R({ gate: { kind: 'seven_day', detail: 'Weekly 96%' }, sevenDayKey: '7d:10' })
+  const acked = { ...initialChainState, chainId: 'c1', sevenDayAck: '7d:10' }
+  expect(evaluateChain(base({ readings: { claude: gated, deepseek: R() }, state: acked })).blocked).toBeNull()
+  const nextWeek = R({ gate: { kind: 'seven_day', detail: 'Weekly 96%' }, sevenDayKey: '7d:99' })
+  expect(evaluateChain(base({ readings: { claude: nextWeek, deepseek: R() }, state: acked })).blocked).not.toBeNull()
+})
+
+test('a forced move survives a healthy current step and is not retargeted', () => {
+  const forced = { ...moveTo({ ...initialChainState, chainId: 'c1' }, 'claude', 'deepseek', NOW, 's1'), forced: true }
+  const r = evaluateChain(base({ state: forced, handoffMtimeMs: NOW, turnIdle: true }))
+  expect(r.launch).toEqual({ stepId: 'deepseek' })
+})
+
+test('a stale later step is named instead of claiming the chain is exhausted', () => {
+  const r = evaluateChain(base({
+    readings: {
+      claude: R({ exhausted: true }),
+      deepseek: R({ stale: true, summary: 'no key: DEEPSEEK_API_KEY' }),
+    },
+  }))
+  expect(r.notify).toMatch(/stale/i)
+  expect(r.notify).toContain('no key')
+})

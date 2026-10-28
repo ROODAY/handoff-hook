@@ -1,5 +1,6 @@
 import type { Chain } from './chain'
 import type { MeterReading } from './meters'
+import { sameWindow } from './usage'
 
 export type ChainPhase = 'idle' | 'handoff_pending' | 'switched'
 
@@ -15,6 +16,8 @@ export type ChainState = {
   pausedUntil: number
   sevenDayAck: string | null
   notifiedAll: string | null
+  notifiedSevenDay: string | null
+  forced: boolean
 }
 
 export const initialChainState: ChainState = {
@@ -29,6 +32,8 @@ export const initialChainState: ChainState = {
   pausedUntil: 0,
   sevenDayAck: null,
   notifiedAll: null,
+  notifiedSevenDay: null,
+  forced: false,
 }
 
 export type ChainInput = {
@@ -87,18 +92,40 @@ export function evaluateChain(input: ChainInput): ChainResult {
   // A failed read never moves anything.
   if (current.stale) return quiet(state)
 
-  // A gate blocks this session's tools and never moves the chain.
-  if (current.gate) {
+  // A gate blocks this session's tools and never moves the chain, until the
+  // person acknowledges that weekly window with /relay resume.
+  if (isGateActive(state, current) && current.gate) {
+    const key = current.sevenDayKey
+    const notify = state.notifiedSevenDay === key ? null : current.gate.detail
     return {
-      state,
+      state: { ...state, notifiedSevenDay: key },
       requestHandoff: null,
       launch: null,
       blocked: { kind: 'seven_day', detail: current.gate.detail },
-      notify: null,
+      notify,
     }
   }
 
   if (state.pausedUntil > now) return quiet(state)
+
+  // A forced move (from /relay next or /relay back) is not cancelled or
+  // retargeted by the automatic rules.
+  if (state.forced && state.phase === 'handoff_pending' && state.owner === sessionId) {
+    const freshForced =
+      input.handoffMtimeMs !== null &&
+      state.requestedAt !== null &&
+      input.handoffMtimeMs >= state.requestedAt
+    if (freshForced && input.turnIdle && state.toStepId) {
+      return {
+        state: { ...state, phase: 'switched', forced: false },
+        requestHandoff: null,
+        launch: { stepId: state.toStepId },
+        blocked: null,
+        notify: `Moving from ${stepId} to ${state.toStepId}.`,
+      }
+    }
+    return quiet(state)
+  }
 
   // Preference wins: the earliest earlier step that is available and fresh.
   let target: string | null = null
@@ -122,6 +149,7 @@ export function evaluateChain(input: ChainInput): ChainResult {
         fromStepId: null,
         toStepId: null,
         requestedAt: null,
+        forced: false,
       })
     }
     return quiet(state)
@@ -141,9 +169,17 @@ export function evaluateChain(input: ChainInput): ChainResult {
   if (!target) {
     const key = `${chain.id}:${current.sevenDayKey || current.summary}`
     if (state.notifiedAll === key) return quiet(state)
+    const reasons = chain.steps
+      .filter(s => s.id !== stepId)
+      .map(s => {
+        const r = readings[s.id]
+        if (!r) return `${s.id}: not read`
+        return r.stale ? `${s.id}: stale (${r.summary})` : `${s.id}: exhausted`
+      })
+      .join('; ')
     return {
       ...quiet({ ...state, notifiedAll: key }),
-      notify: 'Every step in the chain is exhausted; staying on this step.',
+      notify: `No eligible step (${reasons || 'no other steps'}).`,
     }
   }
 
@@ -209,7 +245,14 @@ export function moveTo(
     requestedAt: now,
     fromStepId: from,
     toStepId: to,
+    forced: true,
   }
+}
+
+export function isGateActive(state: ChainState, reading: MeterReading): boolean {
+  if (!reading.gate) return false
+  if (state.sevenDayAck && sameWindow(state.sevenDayAck, reading.sevenDayKey, 60_000)) return false
+  return true
 }
 
 export function lockKeyFor(state: ChainState): string {

@@ -97,6 +97,12 @@ export function readToken(credentialsText: string, now: number): string | null {
   return expiresAt - now > 120_000 ? token : null
 }
 
+export function nextUsage(previous: Snapshot | null, text: string | null, now: number): Snapshot | null {
+  const fresh = typeof text === 'string' ? parseUsageResponse(text, now) : null
+  if (fresh) return fresh
+  return previous ? { ...previous, stale: true } : null
+}
+
 export function fiveHourKey(s: Snapshot): string {
   return s.fiveHourResetsAt === null ? '5h:none' : `5h:${Math.round(s.fiveHourResetsAt / 60_000)}`
 }

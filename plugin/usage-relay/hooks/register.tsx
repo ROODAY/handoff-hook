@@ -4,13 +4,14 @@ import { matchStepByModel, parseChain, type Chain, type ChainStep } from './lib/
 import {
   evaluateChain,
   initialChainState,
+  isGateActive,
   isStaleLock,
   lockKeyFor,
   moveTo,
   type ChainState,
 } from './lib/chainstate'
 import { readMeter, type MeterReading } from './lib/meters'
-import { parseUsageResponse, readToken, sevenDayKey, type Snapshot } from './lib/usage'
+import { nextUsage, readToken, sevenDayKey, type Snapshot } from './lib/usage'
 import { gateTool } from './lib/gate'
 import { buildLaunchArgv } from './lib/launch'
 import { handoffReminder, moveReason } from './lib/reason'
@@ -50,6 +51,7 @@ export const register: Register = (on, options: PluginOptions) => {
     if (!chain) return `usage-relay: ${chainError}`
     if (!stepId) return 'usage-relay: this model is not a step in the chain'
     const index = chain.steps.findIndex(s => s.id === stepId)
+    if (index < 0) return 'usage-relay: this model is not a step in the chain'
     const step = chain.steps[index]
     const reading = readings[stepId]
     const next = chain.steps[index + 1]?.label ?? 'none'
@@ -139,7 +141,12 @@ export const register: Register = (on, options: PluginOptions) => {
         }
         const now = Date.now()
 
+        // Re-read the shared state every tick: another session may own the move.
+        const sharedNow = await $.store.get('relay')
+        if (isChainState(sharedNow)) relay = sharedNow
+
         if (chain.steps.some(s => s.meter.type === 'claude-oauth')) {
+          let text: string | null = null
           try {
             const token = readToken(await $.fs.read(`${home}/.claude/.credentials.json`), Date.now())
             if (token) {
@@ -150,11 +157,12 @@ export const register: Register = (on, options: PluginOptions) => {
                   'Content-Type': 'application/json',
                 },
               })
-              if (res.ok) usage = parseUsageResponse(res.text, Date.now())
+              if (res.ok) text = res.text
             }
           } catch {
-            usage = usage ? { ...usage, stale: true } : null
+            text = null
           }
+          usage = nextUsage(usage, text, now)
         }
 
         const balances: Record<string, unknown> = {}
@@ -231,6 +239,11 @@ export const register: Register = (on, options: PluginOptions) => {
             config.handoffFile,
           )
           await $.session.append({ message: { type: 'user', content: [{ type: 'text', text }] } })
+          const fromIndex = chain.steps.findIndex(s => s.id === result.requestHandoff?.from)
+          const toIndex = chain.steps.findIndex(s => s.id === result.requestHandoff?.to)
+          if (turnIdle && toIndex >= 0 && fromIndex >= 0 && toIndex < fromIndex) {
+            await $.prompt.submit({ text })
+          }
         }
 
         if (result.blocked) {
@@ -242,6 +255,15 @@ export const register: Register = (on, options: PluginOptions) => {
         if (result.launch) {
           const target = chain.steps.find(s => s.id === result.launch?.stepId)
           if (!target) return
+          const sharedCheck = await $.store.get('relay')
+          if (
+            !isChainState(sharedCheck) ||
+            sharedCheck.owner !== sessionId ||
+            sharedCheck.phase !== relay.phase
+          ) {
+            $.ui.status(`${statusText()} · another session is moving the chain`)
+            return
+          }
           const lockPath = `${home}\\.claude\\usage-relay\\lock-${lockKeyFor(relay)}.lock`
           let existing = false
           let mtime: number | null = null
@@ -269,7 +291,8 @@ export const register: Register = (on, options: PluginOptions) => {
             )
             acquired = ((claimed as { exitCode?: number } | undefined)?.exitCode ?? 0) === 0
           } catch {
-            acquired = true
+            // Fail closed: without the lock, do not launch a second successor.
+            acquired = false
           }
           if (!acquired) {
             $.ui.status(`${statusText()} · another session is moving the chain`)
@@ -327,11 +350,10 @@ export const register: Register = (on, options: PluginOptions) => {
     }
 
     await tick()
-    if (enabled) {
-      $.clock.every(config.pollSeconds * 1000, () => {
-        void tick?.().catch(() => {})
-      })
-    }
+    // Poll unconditionally: a session enabled later starts polling from here.
+    $.clock.every(config.pollSeconds * 1000, () => {
+      void tick?.().catch(() => {})
+    })
     return next(e)
   })
 
@@ -340,7 +362,7 @@ export const register: Register = (on, options: PluginOptions) => {
     const state = relay ?? initialChainState
     const reading = readings[stepId]
     const pending = state.phase === 'handoff_pending' && state.owner === sessionId
-    const gated = Boolean(reading && !reading.stale && reading.gate)
+    const gated = Boolean(reading && !reading.stale && reading.gate && isGateActive(state, reading))
     if (!pending && !gated) return next(e)
     const deny = gateTool(
       { kind: pending ? 'handoff' : 'seven_day', root, handoffFile: config.handoffFile },
@@ -384,6 +406,8 @@ export const register: Register = (on, options: PluginOptions) => {
 
   on('command.run', { command: 'relay' }, async ($, e, next) => {
     if (!config) return next(e)
+    const sharedCmd = await $.store.get('relay')
+    if (isChainState(sharedCmd)) relay = sharedCmd
     const arg = e.args.trim().toLowerCase()
     const step = currentStep()
 

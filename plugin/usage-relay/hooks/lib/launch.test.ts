@@ -4,10 +4,8 @@ import type { Config } from './config'
 import type { ChainStep } from './chain'
 
 const config: Config = {
-  fiveHourThreshold: 90, resumeBelow: 5, sevenDayThreshold: 90, pollSeconds: 60,
-  handoffFile: 'HANDOFF.md', claudeModel: 'Claude Code API/claude-opus-5-5[1m]',
-  deepseekModel: 'DeepSeek/deepseek-flash', enabled: true, role: 'claude',
-  fakeFiveHour: null, fakeSevenDay: null, terminal: 'wt',
+  chainFile: 'C:/chain.json', handoffFile: 'HANDOFF.md', pollSeconds: 60,
+  terminal: 'wt', enabled: true, deepseekApiKey: null, fakeMeters: null, reset: false,
 }
 const step: ChainStep = {
   id: 'deepseek', label: 'DeepSeek', model: 'DeepSeek/deepseek-flash',
@@ -30,6 +28,8 @@ test('a launch sets the step, chain file and enablement, and runs the step model
   expect(decoded).toContain("USAGE_RELAY_STEP='deepseek'")
   expect(decoded).toContain("USAGE_RELAY_CHAIN_FILE='C:/chain.json'")
   expect(decoded).toContain("USAGE_RELAY_ENABLED='1'")
+  expect(decoded).toContain("USAGE_RELAY_RESET='0'")
+  expect(decoded).toContain("USAGE_RELAY_FAKE_METERS=''")
   expect(decoded).toContain("--model 'DeepSeek/deepseek-flash'")
   expect(decoded).toContain("'Read HANDOFF.md in this directory and continue the work it describes.'")
 })
