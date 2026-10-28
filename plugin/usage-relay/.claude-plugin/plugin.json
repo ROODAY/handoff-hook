@@ -56,7 +56,7 @@
       "type": "boolean",
       "title": "Enabled",
       "description": "Turns the guard off without uninstalling the plugin.",
-      "default": true
+      "default": false
     }
   }
 }

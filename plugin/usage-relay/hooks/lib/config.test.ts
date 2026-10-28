@@ -1,31 +1,34 @@
 import { expect, test } from 'claude-code/testing'
 import { readConfig } from './config'
 
-test('defaults fill in when options are empty', () => {
-  const c = readConfig({}, {})
-  expect(c.fiveHourThreshold).toBe(90)
-  expect(c.sevenDayThreshold).toBe(90)
-  expect(c.role).toBe('none')
-  expect(c.enabled).toBe(true)
+test('disabled by default, with the documented defaults', () => {
+  const c = readConfig({}, { USERPROFILE: 'C:/Users/me' })
+  expect(c.enabled).toBe(false)
+  expect(c.pollSeconds).toBe(60)
+  expect(c.terminal).toBe('wt')
+  expect(c.handoffFile).toBe('HANDOFF.md')
+  expect(c.chainFile).toBe('C:/Users/me\\.claude\\usage-relay\\chain.json')
 })
 
-test('env overrides options and role is read from USAGE_RELAY_ROLE', () => {
-  const c = readConfig({ five_hour_threshold: 80 }, {
-    USAGE_RELAY_ROLE: 'deepseek',
-    USAGE_RELAY_5H: '85',
-    USAGE_RELAY_FAKE_5H: '95',
-  })
-  expect(c.fiveHourThreshold).toBe(85)
-  expect(c.role).toBe('deepseek')
-  expect(c.fakeFiveHour).toBe(95)
+test('the chain file comes from options or the environment', () => {
+  expect(readConfig({ chain_file: 'D:/chain.json' }, {}).chainFile).toBe('D:/chain.json')
+  expect(readConfig({}, { USAGE_RELAY_CHAIN_FILE: 'E:/c.json' }).chainFile).toBe('E:/c.json')
 })
 
-test('the launch terminal defaults to wt and is overridable', () => {
-  expect(readConfig({}, {}).terminal).toBe('wt')
-  expect(readConfig({ terminal: 'preview' }, {}).terminal).toBe('preview')
-  expect(readConfig({}, { USAGE_RELAY_TERMINAL: 'preview' }).terminal).toBe('preview')
-})
-
-test('USAGE_RELAY_DISABLED turns the guard off', () => {
+test('enablement: options default, env overrides both ways', () => {
+  expect(readConfig({ enabled: true }, {}).enabled).toBe(true)
+  expect(readConfig({}, { USAGE_RELAY_ENABLED: '1' }).enabled).toBe(true)
+  expect(readConfig({ enabled: true }, { USAGE_RELAY_ENABLED: '0' }).enabled).toBe(false)
   expect(readConfig({}, { USAGE_RELAY_DISABLED: '1' }).enabled).toBe(false)
+})
+
+test('fake meters parse from JSON and invalid JSON is ignored', () => {
+  const good = readConfig({}, { USAGE_RELAY_FAKE_METERS: '{"claude":{"exhausted":true}}' })
+  expect(good.fakeMeters?.claude.exhausted).toBe(true)
+  expect(readConfig({}, { USAGE_RELAY_FAKE_METERS: 'oops' }).fakeMeters).toBeNull()
+})
+
+test('the api key prefers the environment', () => {
+  expect(readConfig({ deepseek_api_key: 'from-config' }, {}).deepseekApiKey).toBe('from-config')
+  expect(readConfig({ deepseek_api_key: 'from-config' }, { DEEPSEEK_API_KEY: 'from-env' }).deepseekApiKey).toBe('from-env')
 })
