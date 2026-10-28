@@ -59,7 +59,7 @@ and [METERS.md](METERS.md).
 | `/relay reload` | Re-read the chain file |
 | `/relay pause` | No moves for five hours (the tool gate still applies) |
 | `/relay resume` | Acknowledge the current 7-day window after a block |
-| `/relay reset` | Clear the relay's saved state on this machine |
+| `/relay reset` | Clear the relay's saved state on this machine, including the usage backoff |
 
 `/config` holds the settings: `chain_file`, `handoff_file`, `terminal`
 (`wt`, `preview`, or a path), `poll_seconds`, `enabled` (start enabled), and a

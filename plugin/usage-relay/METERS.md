@@ -42,7 +42,12 @@ Rules that hold for every meter:
 
 Reads `GET https://api.anthropic.com/api/oauth/usage` with the OAuth token from
 `~/.claude/.credentials.json` (never refreshed; an expired token makes the
-reading stale). Exhausted when `five_hour.utilization >= exhaust_at.five_hour`.
+reading stale). The reading is shared machine-wide through the plugin store:
+however many sessions are enabled, the endpoint is called at most once per
+`poll_seconds`. A refused call (a 429, for instance) starts a shared
+exponential backoff — 1, 2, 4, 8, then 15 minutes, or longer if the endpoint
+sends `retry-after` — and the summary says `usage endpoint 429, retry in Nm`.
+`/relay reset` clears the backoff. Exhausted when `five_hour.utilization >= exhaust_at.five_hour`.
 Gates when `seven_day.utilization >= pause_at.seven_day`. Available when
 `five_hour.utilization <= resume_below.five_hour` and it is not gated.
 

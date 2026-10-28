@@ -11,7 +11,18 @@ import {
   type ChainState,
 } from './lib/chainstate'
 import { readMeter, type MeterReading } from './lib/meters'
-import { nextUsage, readToken, sevenDayKey, type Snapshot } from './lib/usage'
+import {
+  afterUsageFetch,
+  describeFetchGate,
+  initialFetchGate,
+  isFetchGate,
+  nextUsage,
+  planUsageFetch,
+  readToken,
+  sevenDayKey,
+  type FetchGate,
+  type Snapshot,
+} from './lib/usage'
 import { gateTool } from './lib/gate'
 import { buildLaunchArgv } from './lib/launch'
 import { handoffReminder, moveReason } from './lib/reason'
@@ -41,7 +52,6 @@ export const register: Register = (on, options: PluginOptions) => {
   let turnIdle = true
   let ticking = false
   let usageError: string | null = null
-  let usageBackoffUntil = 0
   let tick: (() => Promise<void>) | null = null
 
   const currentStep = (): ChainStep | null =>
@@ -83,6 +93,7 @@ export const register: Register = (on, options: PluginOptions) => {
       await $.store.delete('relay')
       await $.store.delete('meters')
       await $.store.delete('usage')
+      await $.store.delete('usageGate')
     }
 
     const loadChain = async (): Promise<void> => {
@@ -148,13 +159,20 @@ export const register: Register = (on, options: PluginOptions) => {
         if (isChainState(sharedNow)) relay = sharedNow
 
         if (chain.steps.some(s => s.meter.type === 'claude-oauth')) {
-          let text: string | null = null
-          if (now >= usageBackoffUntil) {
+          // Shared across sessions: at most one fetch per poll period machine-wide,
+          // and one exponential backoff when the endpoint refuses.
+          const storedGate = await $.store.get('usageGate')
+          let gate: FetchGate = isFetchGate(storedGate) ? storedGate : initialFetchGate
+          const storedUsage = await $.store.get('usage')
+          if (storedUsage && typeof storedUsage === 'object') usage = storedUsage as Snapshot
+
+          if (planUsageFetch(now, gate, config.pollSeconds * 1000) === 'fetch') {
+            await $.store.set('usageGate', { ...gate, lastAttemptAt: now })
+            let text: string | null = null
+            let outcome = { ok: false, status: 0, retryAfterMs: 0 }
             try {
               const token = readToken(await $.fs.read(`${home}/.claude/.credentials.json`), Date.now())
-              if (!token) {
-                usageError = 'token missing or expiring'
-              } else {
+              if (token) {
                 const res = await $.http.fetch('https://api.anthropic.com/api/oauth/usage', {
                   headers: {
                     Authorization: `Bearer ${token}`,
@@ -162,24 +180,24 @@ export const register: Register = (on, options: PluginOptions) => {
                     'Content-Type': 'application/json',
                   },
                 })
-                if (res.ok) {
-                  text = res.text
-                  usageError = null
-                } else {
-                  const retry = Number(res.headers['retry-after'] ?? 0)
-                  const waitMs = Math.max(60_000, Number.isFinite(retry) ? retry * 1000 : 0)
-                  usageBackoffUntil = now + waitMs
-                  usageError = `usage endpoint ${res.status}`
+                const retry = Number(res.headers['retry-after'] ?? 0)
+                outcome = {
+                  ok: res.ok,
+                  status: res.status,
+                  retryAfterMs: Number.isFinite(retry) ? retry * 1000 : 0,
                 }
+                if (res.ok) text = res.text
               }
             } catch {
-              usageBackoffUntil = now + 60_000
-              usageError = usageError ?? 'usage endpoint unreachable'
+              outcome = { ok: false, status: 0, retryAfterMs: 0 }
             }
-          } else {
-            usageError = usageError ?? 'usage endpoint backing off'
+            gate = afterUsageFetch(gate, now, outcome)
+            await $.store.set('usageGate', gate)
+            usage = nextUsage(usage, text, now)
+            if (usage) await $.store.set('usage', usage)
           }
-          usage = nextUsage(usage, text, now)
+          usageError = describeFetchGate(gate, now)
+          if (usageError && usage && !usage.stale) usage = { ...usage, stale: true }
         }
 
         const balances: Record<string, unknown> = {}
@@ -230,8 +248,6 @@ export const register: Register = (on, options: PluginOptions) => {
           }
         }
         await $.store.set('meters', readings)
-        if (usage) await $.store.set('usage', usage)
-
         try {
           const st = await $.fs.stat(`${root}/${config.handoffFile}`)
           handoffMtime = st.kind === 'file' ? st.mtimeMs : null
@@ -525,7 +541,8 @@ export const register: Register = (on, options: PluginOptions) => {
       await $.store.delete('relay')
       await $.store.delete('meters')
       await $.store.delete('usage')
-      return { text: 'Relay state cleared for this machine.' }
+      await $.store.delete('usageGate')
+      return { text: 'Relay state cleared for this machine (including the usage backoff).' }
     }
     if (arg === 'meters') {
       if (!chain) return { text: 'No chain configured.' }
