@@ -67,4 +67,4 @@ running. The usage endpoint and the mod API are both early access.
 
 ## License
 
-Not yet chosen.
+[MIT](LICENSE) © 2026 Rudhra Raveendran

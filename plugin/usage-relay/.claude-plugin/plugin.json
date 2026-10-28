@@ -2,6 +2,7 @@
   "name": "usage-relay",
   "version": "0.1.0",
   "description": "Watches Claude usage and relays work to a DeepSeek session with a written handoff, then back.",
+  "license": "MIT",
   "userConfig": {
     "five_hour_threshold": {
       "type": "number",
