@@ -260,7 +260,7 @@ export const register: Register = (on, options: PluginOptions) => {
           const remove = existing ? `if (Test-Path '${lockPath}') { Remove-Item -Force '${lockPath}' }; ` : ''
           const script =
             `[IO.Directory]::CreateDirectory('${dir}') | Out-Null; ${remove}` +
-            `try { $f=[IO.File]::CreateNew('${lockPath}'); $f.Dispose(); exit 0 } catch { exit 1 }`
+            `try { $f=[IO.File]::Open('${lockPath}',[IO.FileMode]::CreateNew); $f.Dispose(); exit 0 } catch { exit 1 }`
           let acquired = true
           try {
             const claimed = await $.process.run(
