@@ -40,6 +40,8 @@ export const register: Register = (on, options: PluginOptions) => {
   let handoffMtime: number | null = null
   let turnIdle = true
   let ticking = false
+  let usageError: string | null = null
+  let usageBackoffUntil = 0
   let tick: (() => Promise<void>) | null = null
 
   const currentStep = (): ChainStep | null =>
@@ -147,20 +149,35 @@ export const register: Register = (on, options: PluginOptions) => {
 
         if (chain.steps.some(s => s.meter.type === 'claude-oauth')) {
           let text: string | null = null
-          try {
-            const token = readToken(await $.fs.read(`${home}/.claude/.credentials.json`), Date.now())
-            if (token) {
-              const res = await $.http.fetch('https://api.anthropic.com/api/oauth/usage', {
-                headers: {
-                  Authorization: `Bearer ${token}`,
-                  'anthropic-beta': 'oauth-2025-04-20',
-                  'Content-Type': 'application/json',
-                },
-              })
-              if (res.ok) text = res.text
+          if (now >= usageBackoffUntil) {
+            try {
+              const token = readToken(await $.fs.read(`${home}/.claude/.credentials.json`), Date.now())
+              if (!token) {
+                usageError = 'token missing or expiring'
+              } else {
+                const res = await $.http.fetch('https://api.anthropic.com/api/oauth/usage', {
+                  headers: {
+                    Authorization: `Bearer ${token}`,
+                    'anthropic-beta': 'oauth-2025-04-20',
+                    'Content-Type': 'application/json',
+                  },
+                })
+                if (res.ok) {
+                  text = res.text
+                  usageError = null
+                } else {
+                  const retry = Number(res.headers['retry-after'] ?? 0)
+                  const waitMs = Math.max(60_000, Number.isFinite(retry) ? retry * 1000 : 0)
+                  usageBackoffUntil = now + waitMs
+                  usageError = `usage endpoint ${res.status}`
+                }
+              }
+            } catch {
+              usageBackoffUntil = now + 60_000
+              usageError = usageError ?? 'usage endpoint unreachable'
             }
-          } catch {
-            text = null
+          } else {
+            usageError = usageError ?? 'usage endpoint backing off'
           }
           usage = nextUsage(usage, text, now)
         }
@@ -203,6 +220,14 @@ export const register: Register = (on, options: PluginOptions) => {
                 summary: `${base.summary} (fake)`,
               }
             : base
+        }
+        if (usageError) {
+          for (const step of chain.steps) {
+            const r = readings[step.id]
+            if (step.meter.type === 'claude-oauth' && r?.stale) {
+              readings[step.id] = { ...r, summary: `${r.summary} (${usageError})` }
+            }
+          }
         }
         await $.store.set('meters', readings)
         if (usage) await $.store.set('usage', usage)
