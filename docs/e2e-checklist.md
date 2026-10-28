@@ -15,6 +15,7 @@ gitignored.
 | 6 | Real DeepSeek balance read | needs `DEEPSEEK_API_KEY` | **Not run** — no key was set. `/relay meters` should show a dollar summary once it is |
 | 7 | Interactive `/relay` commands | `/relay status`, `enable`, `meters` in a real tab | **Not run headlessly** (plugin slash commands are not dispatched in `-p`) |
 | 8 | Uninstall | `claude plugin uninstall usage-relay` | **Not run** in this round |
+| 9 | Repeat forward move (Claude → DeepSeek) | automatic move at the end of the Claude return-leg's turn | A third tab was launched with `claude --model Fake/two`, so the round trip repeated cleanly. Afterwards the store showed `relay.phase: "idle"`, `relay.owner: null`, `relay.chainId: "255154f8"`; the move's marker `lock-255154f8-claude-deepseek-now.lock` remained in `%USERPROFILE%\.claude\usage-relay\` |
 
 ## Notes
 
@@ -22,6 +23,11 @@ gitignored.
   launched tab could not begin working on the repository.
 - The claim lock lives at `%USERPROFILE%\.claude\usage-relay\lock-<key>.lock`;
   a lock older than three minutes is deleted and recreated.
+- A successful move **leaves its lock file behind** as the marker for that move;
+  it is removed only when the launch fails. A leftover lock is therefore not a
+  failed claim — confirm the claim was released from `relay.phase` and
+  `relay.owner` in the store. Different moves use different keys, so an old
+  marker never blocks the next move.
 - `[IO.File]::CreateNew` does not exist in this PowerShell's runtime; the lock
   uses `[IO.File]::Open(path, [IO.FileMode]::CreateNew)`, which is atomic.
 - `USAGE_RELAY_RESET=1` is needed between test runs because the chain state is
