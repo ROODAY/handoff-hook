@@ -238,10 +238,12 @@ Order of rules:
    - If the current step's reading is `stale` → stay (a failed read never moves).
    - If the current step's reading has a `gate` → stay and return
      `blocked: { kind: gate.kind }`, using the gate's detail as the deny text.
+   - Look for an earlier step that is `available` and not `stale` (preference
+     order, earliest first). If one exists, move **back** to it. This is checked
+     before the sticky rule, or the return trip could never fire.
    - If the current step is **not** `exhausted` → stay. This is the sticky rule;
-     the hysteresis band never triggers a move.
-   - Otherwise, look for an earlier step that is `available` and not `stale`
-     (preference order, earliest first). If one exists, move **back** to it.
+     the hysteresis band never triggers a move, and a pending move that is no
+     longer needed is cancelled back to `idle`.
    - Else look for a later step that is not `exhausted` and not `stale`
      (earliest first). A later step is eligible regardless of `available`: its
      hysteresis guards returning to it, not entering it.
