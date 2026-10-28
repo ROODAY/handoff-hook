@@ -44,7 +44,6 @@
   - `type Chain = { id: string; steps: ChainStep[] }`
   - `const KNOWN_API_KEY_ENVS: readonly string[]` = `['DEEPSEEK_API_KEY']`
   - `parseChain(text: string): { chain: Chain } | { error: string }`
-  - `defaultChain(models: { claudeModel: string; deepseekModel: string }): Chain`
   - `matchStepByModel(chain: Chain, model: string): ChainStep | null`
   - `chainIdOf(text: string): string`
 
@@ -52,7 +51,7 @@
 
 ```ts
 import { expect, test } from 'claude-code/testing'
-import { defaultChain, matchStepByModel, parseChain } from './chain'
+import { matchStepByModel, parseChain } from './chain'
 
 const CLAUDE = {
   id: 'claude', label: 'Claude', model: 'Claude Code API/claude-opus-5-5[1m]',
@@ -95,15 +94,9 @@ test('invalid chains are refused whole with a reason', () => {
   }
 })
 
-test('the default chain is Claude then DeepSeek with the old thresholds', () => {
-  const c = defaultChain({ claudeModel: 'Claude Code API/claude-opus-5-5[1m]', deepseekModel: 'DeepSeek/deepseek-flash' })
-  expect(c.steps.map(s => s.id)).toEqual(['claude', 'deepseek'])
-  expect(c.steps[0].meter.exhaust_at).toEqual({ five_hour: 90 })
-  expect(c.steps[1].model).toBe('DeepSeek/deepseek-flash')
-})
-
 test('model matching tolerates case and a trailing context suffix', () => {
-  const c = defaultChain({ claudeModel: 'Claude Code API/claude-opus-5-5[1m]', deepseekModel: 'DeepSeek/deepseek-flash' })
+  const parsed = parseChain(good())
+  const c = 'chain' in parsed ? parsed.chain : { id: '', steps: [] }
   expect(matchStepByModel(c, 'claude code api/claude-opus-5-5')?.id).toBe('claude')
   expect(matchStepByModel(c, 'DeepSeek/DeepSeek-Flash')?.id).toBe('deepseek')
   expect(matchStepByModel(c, 'gpt-5')).toBeNull()
@@ -117,8 +110,7 @@ Expected: FAIL — cannot resolve `./chain`.
 
 - [ ] **Step 3: Implement `chain.ts`**
 
-Parse with `JSON.parse` inside try/catch. Validate in order: array → non-empty → each step's `id` matches `/^[a-z0-9_-]+$/` and is unique → `label` defaults to `id` → `model` non-empty string → `meter.type` in the registry → per type: `claude-oauth` requires numeric `exhaust_at.five_hour`; `deepseek-balance` requires `api_key_env` in `KNOWN_API_KEY_ENVS`, `exhaust_below.amount` numeric and `exhaust_below.currency` string, optional `resume_above` with the same shape; `session-spend` requires numeric `exhaust_at_usd`. Errors are one sentence, naming the step index or id. `chainIdOf` is FNV-1a over the canonical `JSON.stringify` of the parsed steps, hex, 8 chars. `matchStepByModel` lowercases both sides, strips a trailing `[...]`, and compares equal or prefix-with-`/…`; returns null when nothing matches. `defaultChain` builds the two steps above from the given models with `exhaust_at.five_hour: 90`, `pause_at.seven_day: 90`, `resume_below.five_hour: 5`, and DeepSeek `exhaust_below: { amount: 2, currency: 'USD' }`, `resume_above: { amount: 3, currency: 'USD' }`, `api_key_env: 'DEEPSEEK_API_KEY'`.
-
+Parse with `JSON.parse` inside try/catch. Validate in order: array → non-empty → each step's `id` matches `/^[a-z0-9_-]+$/` and is unique → `label` defaults to `id` → `model` non-empty string → `meter.type` in the registry → per type: `claude-oauth` requires numeric `exhaust_at.five_hour`; `deepseek-balance` requires `api_key_env` in `KNOWN_API_KEY_ENVS`, `exhaust_below.amount` numeric and `exhaust_below.currency` string, optional `resume_above` with the same shape; `session-spend` requires numeric `exhaust_at_usd`. Errors are one sentence, naming the step index or id. `chainIdOf` is FNV-1a over the canonical `JSON.stringify` of the parsed steps, hex, 8 chars. `matchStepByModel` lowercases both sides, strips a trailing `[...]`, and compares equal or prefix-with-`/…`; returns null when nothing matches. 
 - [ ] **Step 4: Run and watch them pass**
 
 Run: `claude plugin test plugin/usage-relay`
@@ -454,10 +446,11 @@ Keep the encoded-command and single-quote tests; replace the model assertions wi
 ```ts
 const step: ChainStep = { id: 'deepseek', label: 'DeepSeek', model: 'DeepSeek/deepseek-flash', meter: { type: 'session-spend' } }
 
-test('a launch sets the step and chain file, and runs the step model', () => {
+test('a launch sets the step, chain file and enablement, and runs the step model', () => {
   const argv = buildLaunchArgv({ root: 'C:/w', step, chainFile: 'C:/chain.json', config })
   const decoded = decode(argv[9])
   expect(decoded).toContain("USAGE_RELAY_STEP='deepseek'")
+  expect(decoded).toContain("USAGE_RELAY_ENABLED='1'")
   expect(decoded).toContain("USAGE_RELAY_CHAIN_FILE='C:/chain.json'")
   expect(decoded).toContain("--model 'DeepSeek/deepseek-flash'")
   expect(decoded).toContain("'Read HANDOFF.md in this directory and continue the work it describes.'")
@@ -471,7 +464,7 @@ Expected: FAIL — `buildLaunchArgv` has no `step`.
 
 - [ ] **Step 3: Implement**
 
-Build `` `$env:USAGE_RELAY_STEP=${quoted(step.id)}; $env:USAGE_RELAY_CHAIN_FILE=${quoted(chainFile)}; & claude --model ${quoted(step.model)} ${quoted(initialPrompt(config.handoffFile))}` `` and encode it as today. Keep `quoted` throwing on a single quote and the `-EncodedCommand` argv shape.
+Build `` `$env:USAGE_RELAY_STEP=${quoted(step.id)}; $env:USAGE_RELAY_CHAIN_FILE=${quoted(chainFile)}; $env:USAGE_RELAY_ENABLED='1'; & claude --model ${quoted(step.model)} ${quoted(initialPrompt(config.handoffFile))}` `` and encode it as today. Keep `quoted` throwing on a single quote and the `-EncodedCommand` argv shape.
 
 - [ ] **Step 4: Run and watch them pass**
 
@@ -506,7 +499,9 @@ Co-Authored-By: Claude Code <noreply@anthropic.com>"
 
 - [ ] **Step 2: Session start**
 
-Resolve `stepId` from `USAGE_RELAY_STEP`, else `matchStepByModel(chain, model)`, else `null`. Read the chain: `$.fs.read(chainFile)`; missing or invalid → a chain-less session whose status line is `usage-relay: <error>` and which never gates or moves. Register `/relay` with `status|next|back|reload|pause|resume|reset|meters|test on|off`. Start the tick.
+Resolve `stepId` from `USAGE_RELAY_STEP`, else `matchStepByModel(chain, model)`, else `null`. Read the chain: `$.fs.read(chainFile)`; missing or invalid → a chain-less session whose status line is `usage-relay: <error>` and which never gates or moves. Register `/relay` with `enable|disable|status|next|back|reload|pause|resume|reset|meters|test on|off`.
+
+Enablement: `enabled` starts from `USAGE_RELAY_ENABLED === '1'` when set, else `userConfig.enabled` (default false). `/relay enable` validates the chain first and refuses with "No chain configured. Set chain_file in /config or create <path>." when there is none; on success it sets the session flag and runs a tick. `/relay disable` clears it and sets the status to `usage-relay: disabled`. `/relay next` and `/relay back` refuse while disabled with "run /relay enable first". While disabled the tick returns immediately: no fetch, no gate, no moves.
 
 - [ ] **Step 3: Tick**
 
@@ -515,7 +510,7 @@ Gather once per tick: Claude usage (existing endpoint logic; also when a `claude
 
 - [ ] **Step 4: Gate, Stop and commands**
 
-`tool.call` blocks when this session owns a `handoff_pending` (handoff kind) or the current reading has a `seven_day` gate; deny text comes from the gate detail or `handoffReason`. `classic.Stop` blocks once while pending and the handoff is missing or older than `requestedAt`, statting the file at the call site. `/relay next` and `/relay back` use `moveTo`; `reload` re-reads the file; `meters` prints every reading plus `stale` reason; `test on|off` sets a session-local fake that forces the current step exhausted.
+`tool.call` blocks only when enabled, and when this session owns a `handoff_pending` (handoff kind) or the current reading has a `seven_day` gate; deny text comes from the gate detail or `handoffReason`. `classic.Stop` blocks once while pending and the handoff is missing or older than `requestedAt`, statting the file at the call site. `/relay next` and `/relay back` use `moveTo`; `reload` re-reads the file; `meters` prints every reading plus `stale` reason; `test on|off` sets a session-local fake that forces the current step exhausted.
 
 - [ ] **Step 5: Integration tests**
 
@@ -587,17 +582,21 @@ Co-Authored-By: Claude Code <noreply@anthropic.com>"
 
 - [ ] **Step 1: Fake-meter move**
 
-In a scratch repo: `USAGE_RELAY_STEP=claude USAGE_RELAY_FAKE_METERS='{"claude":{"exhausted":true,"available":false},"deepseek":{"exhausted":false,"available":true}}' claude -p --permission-mode acceptEdits "Run bash echo hi."` Expected: deny, `HANDOFF.md`, a new tab running the DeepSeek step with `USAGE_RELAY_STEP=deepseek`, no second tab.
+In a scratch repo: `USAGE_RELAY_ENABLED=1 USAGE_RELAY_STEP=claude USAGE_RELAY_CHAIN_FILE=<repo>/chain.json USAGE_RELAY_FAKE_METERS='{"claude":{"exhausted":true,"available":false},"deepseek":{"exhausted":false,"available":true}}' claude -p --permission-mode acceptEdits "Run bash echo hi."` Expected: deny, `HANDOFF.md`, a new tab running the DeepSeek step with `USAGE_RELAY_STEP=deepseek`, no second tab.
 
 - [ ] **Step 2: Return move**
 
-In the DeepSeek step: `USAGE_RELAY_FAKE_METERS='{"claude":{"exhausted":false,"available":true},"deepseek":{}}'` → the return request appears and, with acceptEdits, a Claude tab opens once.
+In the DeepSeek step: `USAGE_RELAY_ENABLED=1 USAGE_RELAY_FAKE_METERS='{"claude":{"exhausted":false,"available":true},"deepseek":{}}'` → the return request appears and, with acceptEdits, a Claude tab opens once.
 
 - [ ] **Step 3: Real DeepSeek balance read (needs the person's key)**
 
 With `DEEPSEEK_API_KEY` set, `/relay meters` in a tab shows a dollar summary, not `stale`. Record the real response shape in `METERS.md`; adjust the parser if it differs.
 
-- [ ] **Step 4: Record and commit**
+- [ ] **Step 4: Set the person's chain up**
+
+Create `%USERPROFILE%\.claude\usage-relay\chain.json` with the two-step Claude → DeepSeek chain (the documented example) and confirm `/relay status` reads it in an interactive tab; `/relay enable` then turns it on. Record it in the README's example.
+
+- [ ] **Step 5: Record and commit**
 
 ```bash
 git add docs/e2e-checklist.md plugin/usage-relay/METERS.md
