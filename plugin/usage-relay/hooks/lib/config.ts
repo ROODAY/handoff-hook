@@ -1,30 +1,21 @@
 import type { PluginOptions } from 'claude-code'
 
-export type Role = 'claude' | 'deepseek' | 'none'
+export type FakeMeter = { exhausted?: boolean; available?: boolean }
 
 export type Config = {
-  fiveHourThreshold: number
-  resumeBelow: number
-  sevenDayThreshold: number
-  pollSeconds: number
+  chainFile: string
   handoffFile: string
-  claudeModel: string
-  deepseekModel: string
+  pollSeconds: number
   terminal: string
   enabled: boolean
-  role: Role
-  fakeFiveHour: number | null
-  fakeSevenDay: number | null
+  deepseekApiKey: string | null
+  fakeMeters: Record<string, FakeMeter> | null
+  reset: boolean
 }
 
 const DEFAULTS = {
-  fiveHourThreshold: 90,
-  resumeBelow: 5,
-  sevenDayThreshold: 90,
-  pollSeconds: 60,
   handoffFile: 'HANDOFF.md',
-  claudeModel: 'Claude Code API/claude-opus-5-5[1m]',
-  deepseekModel: 'DeepSeek/deepseek-flash',
+  pollSeconds: 60,
   terminal: 'wt',
 }
 
@@ -37,14 +28,16 @@ function str(value: unknown, fallback: string): string {
   return typeof value === 'string' && value.length > 0 ? value : fallback
 }
 
-function fakeNumber(value: string | undefined): number | null {
-  if (value === undefined) return null
-  const n = Number(value)
-  return Number.isFinite(n) ? n : null
-}
-
-function role(value: string | undefined): Role {
-  return value === 'claude' || value === 'deepseek' ? value : 'none'
+function fakeMeters(value: string | undefined): Record<string, FakeMeter> | null {
+  if (value === undefined || value.length === 0) return null
+  try {
+    const parsed = JSON.parse(value)
+    return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
+      ? (parsed as Record<string, FakeMeter>)
+      : null
+  } catch {
+    return null
+  }
 }
 
 export function readConfig(
@@ -56,40 +49,27 @@ export function readConfig(
     if (o[name] !== undefined && o[name] !== null) return o[name] as T
     return fallback
   }
+  const home = env.USERPROFILE ?? ''
+  const defaultChain = `${home}\\.claude\\usage-relay\\chain.json`
 
   return {
-    fiveHourThreshold: num(
-      env.USAGE_RELAY_5H,
-      num(pick('five_hour_threshold', DEFAULTS.fiveHourThreshold), DEFAULTS.fiveHourThreshold),
-    ),
-    resumeBelow: num(
-      env.USAGE_RELAY_RESUME_BELOW,
-      num(pick('resume_below', DEFAULTS.resumeBelow), DEFAULTS.resumeBelow),
-    ),
-    sevenDayThreshold: num(
-      env.USAGE_RELAY_7D,
-      num(pick('seven_day_threshold', DEFAULTS.sevenDayThreshold), DEFAULTS.sevenDayThreshold),
+    chainFile: str(env.USAGE_RELAY_CHAIN_FILE, str(pick('chain_file', ''), defaultChain)),
+    handoffFile: str(
+      env.USAGE_RELAY_HANDOFF,
+      str(pick('handoff_file', DEFAULTS.handoffFile), DEFAULTS.handoffFile),
     ),
     pollSeconds: Math.max(
       5,
       num(env.USAGE_RELAY_POLL, num(pick('poll_seconds', DEFAULTS.pollSeconds), DEFAULTS.pollSeconds)),
     ),
-    handoffFile: str(
-      env.USAGE_RELAY_HANDOFF,
-      str(pick('handoff_file', DEFAULTS.handoffFile), DEFAULTS.handoffFile),
-    ),
-    claudeModel: str(
-      env.USAGE_RELAY_CLAUDE_MODEL,
-      str(pick('claude_model', DEFAULTS.claudeModel), DEFAULTS.claudeModel),
-    ),
-    deepseekModel: str(
-      env.USAGE_RELAY_DEEPSEEK_MODEL,
-      str(pick('deepseek_model', DEFAULTS.deepseekModel), DEFAULTS.deepseekModel),
-    ),
     terminal: str(env.USAGE_RELAY_TERMINAL, str(pick('terminal', DEFAULTS.terminal), DEFAULTS.terminal)),
-    enabled: pick('enabled', true) !== false && env.USAGE_RELAY_DISABLED !== '1',
-    role: role(env.USAGE_RELAY_ROLE),
-    fakeFiveHour: fakeNumber(env.USAGE_RELAY_FAKE_5H),
-    fakeSevenDay: fakeNumber(env.USAGE_RELAY_FAKE_7D),
+    enabled:
+      env.USAGE_RELAY_ENABLED === '1' ||
+      (env.USAGE_RELAY_ENABLED !== '0' &&
+        pick('enabled', false) === true &&
+        env.USAGE_RELAY_DISABLED !== '1'),
+    deepseekApiKey: str(env.DEEPSEEK_API_KEY, str(pick('deepseek_api_key', ''), '')) || null,
+    fakeMeters: fakeMeters(env.USAGE_RELAY_FAKE_METERS),
+    reset: env.USAGE_RELAY_RESET === '1',
   }
 }

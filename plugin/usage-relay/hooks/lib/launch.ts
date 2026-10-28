@@ -1,3 +1,4 @@
+import type { ChainStep } from './chain'
 import type { Config } from './config'
 
 export function initialPrompt(handoffFile: string): string {
@@ -20,13 +21,16 @@ function quoted(value: string, what: string): string {
 
 export function buildLaunchArgv(spec: {
   root: string
-  target: 'claude' | 'deepseek'
+  step: ChainStep
+  chainFile: string
   config: Config
 }): string[] {
-  const model = spec.target === 'deepseek' ? spec.config.deepseekModel : spec.config.claudeModel
   const command =
-    `$env:USAGE_RELAY_ROLE=${quoted(spec.target, 'role')}; ` +
-    `& claude --model ${quoted(model, 'model')} ${quoted(initialPrompt(spec.config.handoffFile), 'prompt')}`
+    `$env:USAGE_RELAY_STEP=${quoted(spec.step.id, 'step')}; ` +
+    `$env:USAGE_RELAY_CHAIN_FILE=${quoted(spec.chainFile, 'chain file')}; ` +
+    `$env:USAGE_RELAY_ENABLED='1'; ` +
+    `$env:USAGE_RELAY_RESET='0'; $env:USAGE_RELAY_FAKE_METERS=''; ` +
+    `& claude --model ${quoted(spec.step.model, 'model')} ${quoted(initialPrompt(spec.config.handoffFile), 'prompt')}`
   return [
     spec.config.terminal, '-w', '0', 'new-tab', '-d', spec.root,
     'pwsh', '-NoExit', '-EncodedCommand', utf16leBase64(command),

@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { fiveHourKey, fromSessionRateLimits, parseUsageResponse, readToken, sameWindow } from './usage'
+import { fiveHourKey, fromSessionRateLimits, nextUsage, parseUsageResponse, readToken, sameWindow } from './usage'
 
 const NOW = 1_800_000_000_000
 const BODY = JSON.stringify({
@@ -61,4 +61,12 @@ test('a token is used only while it has more than two minutes left', () => {
   expect(readToken(creds(NOW - 1), NOW)).toBeNull()
   expect(readToken('{}', NOW)).toBeNull()
   expect(readToken('not json', NOW)).toBeNull()
+})
+
+test('a failed read keeps the old numbers but marks them stale', () => {
+  const good = parseUsageResponse(BODY, NOW)!
+  expect(nextUsage(good, null, NOW)?.stale).toBe(true)
+  expect(nextUsage(good, null, NOW)?.fiveHour).toBe(53)
+  expect(nextUsage(null, 'not json', NOW)).toBeNull()
+  expect(nextUsage(good, BODY, NOW)?.stale).toBe(false)
 })

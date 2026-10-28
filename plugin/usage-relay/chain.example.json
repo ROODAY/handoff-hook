@@ -1,0 +1,24 @@
+[
+  {
+    "id": "claude",
+    "label": "Claude",
+    "model": "Claude Code API/claude-opus-5-5[1m]",
+    "meter": {
+      "type": "claude-oauth",
+      "exhaust_at": { "five_hour": 90 },
+      "pause_at": { "seven_day": 90 },
+      "resume_below": { "five_hour": 5 }
+    }
+  },
+  {
+    "id": "deepseek",
+    "label": "DeepSeek",
+    "model": "DeepSeek/deepseek-flash",
+    "meter": {
+      "type": "deepseek-balance",
+      "api_key_env": "DEEPSEEK_API_KEY",
+      "exhaust_below": { "amount": 2, "currency": "USD" },
+      "resume_above": { "amount": 3, "currency": "USD" }
+    }
+  }
+]
