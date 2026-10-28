@@ -31,6 +31,11 @@ met while quota remains — not a failed request.
 
 ## Goals
 
+0. **Disabled by default.** A session does nothing — no polling, no gate, no
+   moves — until it is enabled. Enablement is per session (`/relay enable`), and
+   a session launched by the relay inherits it. Enabling with no valid chain
+   fails, stays disabled, and says how to configure one. There is no built-in
+   chain.
 1. A `chain.json` file lists steps in preference order; each step names a model,
    a meter, and that meter's thresholds.
 2. Each session knows its step from `USAGE_RELAY_STEP` (set by the launcher).
@@ -69,13 +74,32 @@ met while quota remains — not a failed request.
 
 ## Design
 
+### Enablement
+
+Three inputs decide whether a session acts, in this order:
+
+1. `USAGE_RELAY_ENABLED` (`1`/`0`) — set by the launcher for a successor tab.
+2. `/relay enable` / `/relay disable` — the session-local toggle, held in memory
+   and never written to the store.
+3. `userConfig.enabled` — the default for a new session; **false** out of the box.
+
+`/relay enable` first validates the chain. With no readable, valid chain it
+answers "No chain configured. Set `chain_file` in /config or create
+`<path>`." and leaves the session disabled. While disabled: no polling, no
+status figures, no gate, no moves; the status line reads
+`usage-relay: disabled`.
+
+`/relay next` and `/relay back` fail while disabled, with the same
+"run /relay enable" answer.
+
 ### Chain file
 
 `~/.claude/usage-relay/chain.json` by default, built from `USERPROFILE` (`$.fs`
 does not expand `~`); `userConfig.chain_file` (and `USAGE_RELAY_CHAIN_FILE`)
-name another path. Read at `session.start` and on
-`/relay reload`. A hash of the parsed file is the `chainId`; a different
-`chainId` with the same file path invalidates step-specific state.
+name another path. Read at `session.start` and on `/relay reload`. **There is no
+default chain**: a missing, unreadable or invalid file leaves the session
+chain-less. A hash of the parsed file is the `chainId`; a different `chainId`
+with the same file path invalidates step-specific state.
 
 ```json
 [
@@ -285,17 +309,19 @@ available) and the status line says which key is missing.
 ### Compatibility
 
 This replaces the two-role design; version 0.2.0. `userConfig` keeps
-`chain_file`, `handoff_file`, `terminal`, `poll_seconds`, `enabled`; the old
-threshold fields move into the chain file and are dropped from the schema with
-a migration note in the README. A missing chain file adopts a default two-step
-chain written from the old defaults (Claude → DeepSeek), so existing installs
-keep working.
+`chain_file`, `handoff_file`, `terminal`, `poll_seconds`, `enabled` (default
+false) and adds `deepseek_api_key`; the old threshold fields move into the chain
+file and are dropped from the schema, with a migration note in the README and an
+example chain shipped in the plugin folder. Existing installs do nothing until
+they create a chain and enable a session.
 
 ### Edge cases
 
 | Case | Behaviour |
 |---|---|
-| Chain file missing or invalid | No chain; status says why; nothing switches or gates |
+| Disabled session | No polling, no gate, no moves; status `usage-relay: disabled` |
+| `/relay enable` with no valid chain | Refused, stays disabled, names the path and `/config` field |
+| Chain file missing or invalid | No chain; nothing polls, gates or moves; status says why |
 | Chain edited mid-session | `chainId` differs → state resets; `/relay reload` re-reads without restart |
 | Current step removed from the chain | Treat as not-in-chain: no moves, tools ungated, status says so; `/relay status` names it |
 | Only one step | Guard-only: gated at its meter, no moves |
@@ -328,6 +354,8 @@ keep working.
 - The 7-day limit stays a pause, not a move.
 - Hysteresis per step (`resume_below` / `resume_above_usd`), my call.
 - Invalid chain disables the chain wholesale rather than partially, my call.
+- Disabled by default; per-session enablement with successor inheritance, per
+  the request. No implicit default chain.
 - Stale readings never cause movement, my call.
 - Selection is sticky: a current step that is not exhausted is kept; earlier
   steps are eligible only when they are `available` (post-hysteresis); later
