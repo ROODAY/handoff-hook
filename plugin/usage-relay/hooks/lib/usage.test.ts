@@ -1,5 +1,8 @@
 import { expect, test } from 'claude-code/testing'
-import { fiveHourKey, fromSessionRateLimits, nextUsage, parseUsageResponse, readToken, sameWindow } from './usage'
+import {
+  afterUsageFetch, describeFetchGate, fiveHourKey, fromSessionRateLimits, initialFetchGate,
+  nextUsage, parseUsageResponse, planUsageFetch, readToken, sameWindow,
+} from './usage'
 
 const NOW = 1_800_000_000_000
 const BODY = JSON.stringify({
@@ -69,4 +72,36 @@ test('a failed read keeps the old numbers but marks them stale', () => {
   expect(nextUsage(good, null, NOW)?.fiveHour).toBe(53)
   expect(nextUsage(null, 'not json', NOW)).toBeNull()
   expect(nextUsage(good, BODY, NOW)?.stale).toBe(false)
+})
+
+test('a shared gate allows one fetch per interval across sessions', () => {
+  const gate = { ...initialFetchGate, lastAttemptAt: NOW - 30_000 }
+  expect(planUsageFetch(NOW, gate, 60_000)).toBe('reuse')
+  expect(planUsageFetch(NOW + 31_000, gate, 60_000)).toBe('fetch')
+  expect(planUsageFetch(NOW, initialFetchGate, 60_000)).toBe('fetch')
+})
+
+test('failures back off exponentially up to fifteen minutes, success resets', () => {
+  let gate = initialFetchGate
+  const waits: number[] = []
+  for (let i = 0; i < 6; i++) {
+    gate = afterUsageFetch(gate, NOW, { ok: false, status: 429, retryAfterMs: 0 })
+    waits.push(gate.backoffUntil - NOW)
+  }
+  expect(waits).toEqual([60_000, 120_000, 240_000, 480_000, 900_000, 900_000])
+  expect(planUsageFetch(NOW + 899_000, gate, 60_000)).toBe('reuse')
+  expect(gate.lastError).toBe('usage endpoint 429')
+  const ok = afterUsageFetch(gate, NOW, { ok: true, status: 200, retryAfterMs: 0 })
+  expect([ok.failures, ok.backoffUntil, ok.lastError]).toEqual([0, 0, null])
+})
+
+test('a longer retry-after wins over the computed backoff', () => {
+  const gate = afterUsageFetch(initialFetchGate, NOW, { ok: false, status: 429, retryAfterMs: 600_000 })
+  expect(gate.backoffUntil - NOW).toBe(600_000)
+})
+
+test('the gate explains itself while backing off', () => {
+  const gate = afterUsageFetch(initialFetchGate, NOW, { ok: false, status: 429, retryAfterMs: 0 })
+  expect(describeFetchGate(gate, NOW + 15_000)).toBe('usage endpoint 429, retry in 1m')
+  expect(describeFetchGate(initialFetchGate, NOW)).toBeNull()
 })

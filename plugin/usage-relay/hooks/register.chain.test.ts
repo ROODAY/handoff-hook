@@ -115,3 +115,45 @@ test('a session that does not own a pending move neither gates nor claims', asyn
   const allowed = await $.tool.call({ tool: 'Bash', command: 'echo hi' })
   expect(allowed.text).toBe('ok')
 })
+
+test('a session reuses a fresh shared reading instead of calling the endpoint', async ($, on) => {
+  const statuses: (string | undefined)[] = []
+  const now = Date.now()
+  seat(on, statuses, CHAIN, {
+    usageGate: { lastAttemptAt: now, backoffUntil: 0, failures: 0, lastError: null },
+    usage: {
+      fiveHour: 40, fiveHourResetsAt: now + 3_600_000, sevenDay: 50,
+      sevenDayResetsAt: now + 86_400_000, fetchedAt: now, source: 'endpoint', stale: false,
+    },
+  })
+  const calls: string[] = []
+  on('http.fetch', (_$: any, e: any) => {
+    calls.push(String(e.url))
+    return { value: { status: 200, ok: true, headers: {}, text: '{}' } }
+  })
+  mock.env(on, { USAGE_RELAY_CHAIN_FILE: 'C:/chain.json', USAGE_RELAY_STEP: 'claude', USAGE_RELAY_ENABLED: '1' })
+
+  await $.session.start(SESSION)
+
+  expect(calls.filter(u => u.includes('oauth/usage'))).toEqual([])
+  expect(statuses.some(line => line?.includes('5h 40%'))).toBe(true)
+})
+
+test('a session inside the shared backoff does not call the endpoint and says why', async ($, on) => {
+  const statuses: (string | undefined)[] = []
+  const now = Date.now()
+  seat(on, statuses, CHAIN, {
+    usageGate: { lastAttemptAt: now - 120_000, backoffUntil: now + 240_000, failures: 3, lastError: 'usage endpoint 429' },
+  })
+  const calls: string[] = []
+  on('http.fetch', (_$: any, e: any) => {
+    calls.push(String(e.url))
+    return { value: { status: 200, ok: true, headers: {}, text: '{}' } }
+  })
+  mock.env(on, { USAGE_RELAY_CHAIN_FILE: 'C:/chain.json', USAGE_RELAY_STEP: 'claude', USAGE_RELAY_ENABLED: '1' })
+
+  await $.session.start(SESSION)
+
+  expect(calls.filter(u => u.includes('oauth/usage'))).toEqual([])
+  expect(statuses.some(line => line?.includes('usage endpoint 429, retry in 4m'))).toBe(true)
+})

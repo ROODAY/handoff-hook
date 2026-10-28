@@ -118,3 +118,58 @@ export function sameWindow(a: string, b: string, toleranceMs: number): boolean {
   if (!Number.isFinite(na) || !Number.isFinite(nb)) return false
   return Math.abs(na - nb) * 60_000 <= toleranceMs
 }
+
+// One usage fetch per interval for the whole machine: every session reads and
+// writes this gate through the plugin store, so N open sessions cost one call.
+export type FetchGate = {
+  lastAttemptAt: number
+  backoffUntil: number
+  failures: number
+  lastError: string | null
+}
+
+export const initialFetchGate: FetchGate = {
+  lastAttemptAt: 0,
+  backoffUntil: 0,
+  failures: 0,
+  lastError: null,
+}
+
+const BACKOFF_BASE_MS = 60_000
+const BACKOFF_CAP_MS = 15 * 60_000
+
+export function planUsageFetch(now: number, gate: FetchGate, intervalMs: number): 'fetch' | 'reuse' {
+  if (now < gate.backoffUntil) return 'reuse'
+  if (now - gate.lastAttemptAt < intervalMs) return 'reuse'
+  return 'fetch'
+}
+
+export function afterUsageFetch(
+  gate: FetchGate,
+  now: number,
+  outcome: { ok: boolean; status: number; retryAfterMs: number },
+): FetchGate {
+  if (outcome.ok) return { lastAttemptAt: now, backoffUntil: 0, failures: 0, lastError: null }
+  const failures = gate.failures + 1
+  const computed = Math.min(BACKOFF_CAP_MS, BACKOFF_BASE_MS * 2 ** (failures - 1))
+  const wait = Math.max(computed, outcome.retryAfterMs)
+  return {
+    lastAttemptAt: now,
+    backoffUntil: now + wait,
+    failures,
+    lastError: outcome.status > 0 ? `usage endpoint ${outcome.status}` : 'usage endpoint unreachable',
+  }
+}
+
+export function describeFetchGate(gate: FetchGate, now: number): string | null {
+  if (!gate.lastError) return null
+  const left = gate.backoffUntil - now
+  if (left <= 0) return gate.lastError
+  return `${gate.lastError}, retry in ${Math.ceil(left / 60_000)}m`
+}
+
+export function isFetchGate(value: unknown): value is FetchGate {
+  if (typeof value !== 'object' || value === null) return false
+  const v = value as Record<string, unknown>
+  return typeof v.lastAttemptAt === 'number' && typeof v.backoffUntil === 'number' && typeof v.failures === 'number'
+}
